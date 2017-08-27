@@ -100,9 +100,34 @@ fn main() {
 
 #[cfg(test)]
 mod test {
+extern crate hyper;
+extern crate tokio_core;
+use Echo;
+use futures::Future;
+use hyper::{Client, StatusCode, Error};
+use hyper::server::Http;
+use std::{thread, time};
 
     #[test]
     fn put() {
-        assert!(false);
+        let serverThread = thread::spawn(|| { 
+            let addr = "127.0.0.1:1337".parse().unwrap();
+
+            let server = Http::new().bind(&addr, || Ok(Echo::new())).unwrap();
+            println!( "Listeningon http://{} with 1 thread.",
+                server.local_addr().unwrap());
+
+            server.run().unwrap();
+        });
+        thread::sleep(time::Duration::from_millis(1000));
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let client = Client::new(&core.handle());
+        let uri = "http://localhost:1337/foo".parse().unwrap();
+        let mut res = client.get(uri).map(|res| {
+            println!("Response {}", res.status());
+            res.status() 
+        });
+        let mut f = core.run(res);
+        assert_eq!(f.unwrap(), hyper::NotFound);
     }
 }

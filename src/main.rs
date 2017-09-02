@@ -104,14 +104,42 @@ extern crate hyper;
 extern crate tokio_core;
 use Echo;
 use futures::Future;
-use hyper::{Client, StatusCode, Error};
+use hyper::{Client, StatusCode, Error, Method, Request};
+use hyper::header::{ContentType, ContentLength};
 use hyper::server::Http;
 use std::{thread, time};
+use std::thread::JoinHandle;
 
     #[test]
     fn put() {
-        let serverThread = thread::spawn(|| { 
-            let addr = "127.0.0.1:1337".parse().unwrap();
+        start_server(1337);
+        let mut core = tokio_core::reactor::Core::new().unwrap();
+        let client = Client::new(&core.handle());
+        let uri : hyper::Uri = "http://localhost:1337/foo".parse().unwrap();
+        let mut res = client.get(uri.clone()).map(|res| {
+            println!("Response {}", res.status());
+            res.status() 
+        });
+        let mut f = core.run(res);
+        assert_eq!(f.unwrap(), hyper::NotFound);
+
+        // put 
+        let mut post_req = Request::new(Method::Post, uri);
+        let body = "123";
+        post_req.headers_mut().set(ContentType::plaintext());
+        post_req.headers_mut().set(ContentLength(body.len() as u64));
+        post_req.set_body("123");
+        let mut res_post  = client.request(post_req).map(|res| { 
+            println!("Response {}", res.status());
+            res.status()
+        });
+        let mut f = core.run(res_post);
+        assert_eq!(f.unwrap(), hyper::Ok);
+    }
+
+    fn start_server(port:u32) { 
+        let serverThread = thread::spawn(move || { 
+            let addr = format!("127.0.0.1:{}", port).parse().unwrap();
 
             let server = Http::new().bind(&addr, || Ok(Echo::new())).unwrap();
             println!( "Listeningon http://{} with 1 thread.",
@@ -119,15 +147,7 @@ use std::{thread, time};
 
             server.run().unwrap();
         });
-        thread::sleep(time::Duration::from_millis(1000));
-        let mut core = tokio_core::reactor::Core::new().unwrap();
-        let client = Client::new(&core.handle());
-        let uri = "http://localhost:1337/foo".parse().unwrap();
-        let mut res = client.get(uri).map(|res| {
-            println!("Response {}", res.status());
-            res.status() 
-        });
-        let mut f = core.run(res);
-        assert_eq!(f.unwrap(), hyper::NotFound);
+        thread::sleep(time::Duration::from_millis(2000));
     }
+
 }

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use futures::{Future, Stream};
+use futures::future::Either;
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Http, Service, Request, Response};
@@ -107,7 +108,8 @@ mod test {
 extern crate hyper;
 extern crate tokio_core;
 use Echo;
-use futures::Future;
+use futures::{Stream, Future};
+use futures::future::*;
 use hyper::{Client, Method, Request};
 use hyper::header::{ContentType, ContentLength};
 use hyper::server::Http;
@@ -151,15 +153,19 @@ const URI_BASE: &str= "http://localhost:1337";
         assert_eq!(f.unwrap(), hyper::Ok);
 
         // now do the get
-        let mut res = client.get(uri.clone()).map(|res| {
-            (res.status(), 
-            res.body())
-        });
-        let f = core.run(res);
-        let (code, b) = f.unwrap();  
-        assert_eq!(hyper::Ok, code);
-        // TODO: STart here with pulling in body
-        //assert_eq!("123", b);
+        let mut res = client.get(uri.clone())
+            .and_then(|res| {
+                return res.body().concat2()
+            })
+            .and_then(move |c| match String::from_utf8(c.to_vec()) {
+                Ok(s) => ok(s),
+                Err(e) => err(
+                    hyper::error::Error::Utf8(e.utf8_error()),
+                ),
+
+            });
+        
+        assert_eq!(body, core.run(res).unwrap()); 
     }
     
     fn start_server() { 

@@ -2,7 +2,6 @@ extern crate futures;
 extern crate hyper;
 extern crate pretty_env_logger;
 
-use std::ops::DerefMut;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -10,24 +9,6 @@ use futures::{Future, Stream};
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Http, Service, Request, Response};
-
-
-fn add(data: &mut HashMap<String, String>, path: &str, value: String) -> Response {
-    match data.insert(path.to_string(), value) { 
-        // return the old value
-        Some(d) => {
-            println!("Replace value");
-            Response::new()
-                .with_header(ContentLength(d.len() as u64))
-                .with_body(d.clone())
-        }
-        _ => {
-            println!("Insert new value {}, {}", path, data.len());
-
-            Response::new().with_status(StatusCode::Ok)
-        },
-    }
-}
 
 struct Echo {
     data: Rc<RefCell<HashMap<String, String>>>,
@@ -85,26 +66,7 @@ impl Service for Echo {
                             ),
 
                         })
-/*                        .and_then(move |c| {
-//                            match self.data.borrow_mut().insert(uri.path().to_string(), c.clone()) { 
-//                                // return the old value
-                                Some(d) => {
-                                    println!("Replace value");
-                                    let r = Response::new()
-                                        .with_header(ContentLength(d.len() as u64))
-                                        .with_body(d.clone());
-
-                                    futures::future::ok(r)
-                                }
-                                _ => {
-                                    println!("Insert new value {}, {}", uri.path(), self.data.borrow().len());
-
-                                    futures::future::ok(Response::new().with_status(StatusCode::Ok))
-                                },
-                            }
-                        }),
-*/                        
-                )
+                    )
             }
             _ => Box::new(
                 futures::future::ok(Response::new().with_status(StatusCode::BadRequest))
@@ -141,8 +103,11 @@ use futures::future::*;
 use hyper::{Client, Method, Request};
 use hyper::header::{ContentType, ContentLength};
 use hyper::server::Http;
+use hyper::client::HttpConnector;
 use std::{thread, time};
 use std::sync::{Arc, Mutex}; 
+use std::result::Result;
+
 
 lazy_static! { 
     static ref SERVER_STATE:Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -150,50 +115,66 @@ lazy_static! {
 
 const URI_BASE: &str= "http://localhost:1337"; 
 
+struct BlockingClient { 
+    core: tokio_core::reactor::Core,
+    client: hyper::Client<HttpConnector>,
+}
+
+impl BlockingClient { 
+    fn new() -> BlockingClient {
+        let core = tokio_core::reactor::Core::new().unwrap();
+        BlockingClient { 
+            client: Client::new(&core.handle()),
+            core: core, 
+        }
+    }
+    
+    fn get(&mut self, path :&String) -> Result<String, hyper::StatusCode> {
+        let uri : hyper::Uri = format!("{}/{}", URI_BASE, path).parse().unwrap();
+        let res = self.core.run(self.client.get(uri.clone())).unwrap(); 
+        if res.status() == hyper::StatusCode::Ok {
+            Ok(self.core.run(res.body().concat2()
+                .and_then(|c| {  
+                          let body = String::from_utf8(c.to_vec()).unwrap(); 
+                          println!("Built string"); 
+                          ok(body)
+                })).unwrap())
+        } else {
+            Err(res.status())
+        }
+    }
+
+    fn put(&mut self, path :&String, body: &String) -> Result<Option<String>, hyper::StatusCode> {
+        let uri : hyper::Uri = format!("{}/{}", URI_BASE, path).parse().unwrap();
+        let mut post_req = Request::new(Method::Post, uri.clone());
+        post_req.headers_mut().set(ContentType::plaintext());
+        post_req.headers_mut().set(ContentLength(body.len() as u64));
+        post_req.set_body(body.clone());
+        let res_post  = self.core.run(self.client.request(post_req)).unwrap();
+        match res_post.status() {
+            hyper::StatusCode::Ok => Ok(None),
+            _ => Err(res_post.status())
+        }
+    }
+}
+
     #[test]
     fn get_nothing() {
         start_server();
-        let mut core = tokio_core::reactor::Core::new().unwrap();
-        let client = Client::new(&core.handle());
-        let uri : hyper::Uri = format!("{}/foo", URI_BASE).parse().unwrap();
-        let res = client.get(uri.clone()).map(|res| {
-            res.status() 
-        });
-        let f = core.run(res);
-        assert_eq!(f.unwrap(), hyper::NotFound);
+        let mut client = BlockingClient::new();
+        let result = client.get(&String::from("foo"));
+        assert_eq!(hyper::StatusCode::NotFound, result.unwrap_err());
     }
 
     #[test]
     fn put_empty_get() { 
-        // put 
-        let mut core = tokio_core::reactor::Core::new().unwrap();
-        let client = Client::new(&core.handle());
-        let uri : hyper::Uri = format!("{}/get_put", URI_BASE).parse().unwrap();
-        let mut post_req = Request::new(Method::Post, uri.clone());
-        let body = "123";
-        post_req.headers_mut().set(ContentType::plaintext());
-        post_req.headers_mut().set(ContentLength(body.len() as u64));
-        post_req.set_body("123");
-        let res_post  = client.request(post_req).map(|res| { 
-            res.status()
-        });
-        let f = core.run(res_post);
-        assert_eq!(f.unwrap(), hyper::Ok);
+        let mut client = BlockingClient::new();
+        let body = String::from("123");
+        let path = String::from("get_put");
 
-        // now do the get
-        let get_res = client.get(uri.clone())
-            .and_then(|res| {
-                return res.body().concat2()
-            })
-            .and_then(move |c| match String::from_utf8(c.to_vec()) {
-                Ok(s) => {println!("Got an ok"); ok(s)},
-                Err(e) => err(
-                    hyper::error::Error::Utf8(e.utf8_error()),
-                ),
+        assert_eq!(None, client.put(&path, &body).unwrap());
 
-            });
-        
-        assert_eq!(body, core.run(get_res).unwrap()); 
+        assert_eq!(body, client.get(&path).unwrap()); 
     }
     
     fn start_server() { 

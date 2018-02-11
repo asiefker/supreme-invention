@@ -7,7 +7,6 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use futures::{Future, Stream};
-use futures::future::Either;
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Http, Service, Request, Response};
@@ -17,11 +16,16 @@ fn add(data: &mut HashMap<String, String>, path: &str, value: String) -> Respons
     match data.insert(path.to_string(), value) { 
         // return the old value
         Some(d) => {
+            println!("Replace value");
             Response::new()
                 .with_header(ContentLength(d.len() as u64))
                 .with_body(d.clone())
         }
-        _ => Response::new().with_status(StatusCode::Ok),
+        _ => {
+            println!("Insert new value {}, {}", path, data.len());
+
+            Response::new().with_status(StatusCode::Ok)
+        },
     }
 }
 
@@ -43,19 +47,22 @@ impl Service for Echo {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
-        let (m, uri, _, headers, body) = req.deconstruct();
-        let d = self.data.clone();
+        let (m, uri, _, _, body) = req.deconstruct();
+        let path = String::from(uri.path());
         match m { 
             Get => {
-                match d.borrow().get(uri.path()) {
-                    Some(d) => {
+                println!("getting at {}, len {}",path, self.data.borrow().len() );
+                match self.data.borrow().get(&path) {
+                    Some(v) => {
+                        println!("Present {}", v);
                         Box::new(futures::future::ok(
                             Response::new()
-                                .with_header(ContentLength(d.len() as u64))
-                                .with_body(d.clone()),
+                                .with_header(ContentLength(v.len() as u64))
+                                .with_body(v.clone()),
                         ))
                     } 
                     _ => {
+                        println!("Empty");
                         Box::new(futures::future::ok(
                             Response::new().with_status(StatusCode::NotFound),
                         ))
@@ -63,23 +70,44 @@ impl Service for Echo {
                 }
             }
             Post => {
+                println!("Posting");
+                let state = self.data.clone();
                 Box::new(
                     body.concat2()
                         .and_then(move |c| match String::from_utf8(c.to_vec()) {
-                            Ok(s) => futures::future::ok(s),
+                            Ok(s) =>  
+                                match state.borrow_mut().insert(path, s.clone()) {
+                                    _ => futures::future::ok(Response::new().with_status(StatusCode::Ok)), 
+                                }    
+                                
                             Err(e) => futures::future::err(
                                 hyper::error::Error::Utf8(e.utf8_error()),
                             ),
 
                         })
-                        .and_then(move |c| {
-                            add(d.borrow_mut().deref_mut(), uri.path(), c.clone());
-                            futures::future::ok((Response::new().with_body(c)))
+/*                        .and_then(move |c| {
+//                            match self.data.borrow_mut().insert(uri.path().to_string(), c.clone()) { 
+//                                // return the old value
+                                Some(d) => {
+                                    println!("Replace value");
+                                    let r = Response::new()
+                                        .with_header(ContentLength(d.len() as u64))
+                                        .with_body(d.clone());
+
+                                    futures::future::ok(r)
+                                }
+                                _ => {
+                                    println!("Insert new value {}, {}", uri.path(), self.data.borrow().len());
+
+                                    futures::future::ok(Response::new().with_status(StatusCode::Ok))
+                                },
+                            }
                         }),
+*/                        
                 )
             }
             _ => Box::new(
-                futures::future::ok(Response::new().with_status(StatusCode::BadRequest)).boxed(),
+                futures::future::ok(Response::new().with_status(StatusCode::BadRequest))
             ),
         }
     }
@@ -153,19 +181,19 @@ const URI_BASE: &str= "http://localhost:1337";
         assert_eq!(f.unwrap(), hyper::Ok);
 
         // now do the get
-        let mut res = client.get(uri.clone())
+        let get_res = client.get(uri.clone())
             .and_then(|res| {
                 return res.body().concat2()
             })
             .and_then(move |c| match String::from_utf8(c.to_vec()) {
-                Ok(s) => ok(s),
+                Ok(s) => {println!("Got an ok"); ok(s)},
                 Err(e) => err(
                     hyper::error::Error::Utf8(e.utf8_error()),
                 ),
 
             });
         
-        assert_eq!(body, core.run(res).unwrap()); 
+        assert_eq!(body, core.run(get_res).unwrap()); 
     }
     
     fn start_server() { 

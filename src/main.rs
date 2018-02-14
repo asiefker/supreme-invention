@@ -59,7 +59,11 @@ impl Service for Echo {
                         .and_then(move |c| match String::from_utf8(c.to_vec()) {
                             Ok(s) =>  
                                 match state.borrow_mut().insert(path, s.clone()) {
-                                    _ => futures::future::ok(Response::new().with_status(StatusCode::Ok)), 
+                                    Some(b) => { 
+                                        futures::future::ok(Response::new()
+                                                                .with_status(StatusCode::Ok)
+                                                                .with_body(b))}, 
+                                    None => futures::future::ok(Response::new().with_status(StatusCode::Ok)), 
                                 }    
                                 
                             Err(e) => futures::future::err(
@@ -124,16 +128,25 @@ impl BlockingClient {
     fn get(&mut self, path :&String) -> Result<String, hyper::StatusCode> {
         let uri : hyper::Uri = self.build_uri(path.clone()); 
         let res = self.core.run(self.client.get(uri.clone())).unwrap(); 
-        if res.status() == hyper::StatusCode::Ok {
-            Ok(self.core.run(res.body().concat2()
-                .and_then(|c| {  
-                          let body = String::from_utf8(c.to_vec()).unwrap(); 
-                          info!("Built string"); 
-                          ok(body)
-                })).unwrap())
-        } else {
-            Err(res.status())
-        }
+        match res.status() { 
+            hyper::StatusCode::Ok => { 
+                let body = self.build_body(res); 
+                match body.as_ref() { 
+                    "" => Err(hyper::StatusCode::NotFound),
+                     _ => Ok(body)
+                }
+            },
+            _ => Err(res.status()),
+        } 
+    }
+
+    fn build_body(&mut self, res :hyper::Response) -> String { 
+        self.core.run(res.body().concat2()
+            .and_then(|c| {  
+                        let body = String::from_utf8(c.to_vec()).unwrap(); 
+                        info!("Built string"); 
+                        ok(body)
+            })).unwrap()
     }
 
     fn put(&mut self, path :&String, body: &String) -> Result<Option<String>, hyper::StatusCode> {
@@ -144,7 +157,13 @@ impl BlockingClient {
         post_req.set_body(body.clone());
         let res_post  = self.core.run(self.client.request(post_req)).unwrap();
         match res_post.status() {
-            hyper::StatusCode::Ok => Ok(None),
+            hyper::StatusCode::Ok => { 
+                let body = self.build_body(res_post);
+                match body.as_ref() { 
+                    "" => Ok(None),
+                    _ => Ok(Some(body))    
+                }
+            },
             _ => Err(res_post.status())
         }
     }
@@ -174,6 +193,20 @@ impl BlockingClient {
         assert_eq!(body, client.get(&path).unwrap()); 
     }
     
+  #[test]
+    fn put_put_get() { 
+        start_server(1339);
+        let mut client = BlockingClient::new(1339);
+        let body = String::from("a body");
+        let body2 = String::from("A different body with a pithy saying");
+        let path = String::from("put_put");
+
+        assert_eq!(None, client.put(&path, &body).unwrap());
+        assert_eq!(Some(body), client.put(&path, &body2).unwrap());
+
+        assert_eq!(body2, client.get(&path).unwrap()); 
+    }
+
     fn start_server(port :u32) { 
         thread::spawn(move || { 
             let addr = format!("127.0.0.1:{}", port).parse().unwrap();

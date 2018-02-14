@@ -90,8 +90,6 @@ fn main() {
 }
 
 
-#[macro_use]
-extern crate lazy_static;
 #[cfg(test)]
 mod test {
 
@@ -110,28 +108,25 @@ use std::sync::{Arc, Mutex};
 use std::result::Result;
 
 
-lazy_static! { 
-    static ref SERVER_STATE:Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-}
-
-const URI_BASE: &str= "http://localhost:1337"; 
 
 struct BlockingClient { 
     core: tokio_core::reactor::Core,
     client: hyper::Client<HttpConnector>,
+    port: u32,
 }
 
 impl BlockingClient { 
-    fn new() -> BlockingClient {
+    fn new(port: u32) -> BlockingClient {
         let core = tokio_core::reactor::Core::new().unwrap();
         BlockingClient { 
             client: Client::new(&core.handle()),
             core: core, 
+            port: port 
         }
     }
-    
+
     fn get(&mut self, path :&String) -> Result<String, hyper::StatusCode> {
-        let uri : hyper::Uri = format!("{}/{}", URI_BASE, path).parse().unwrap();
+        let uri : hyper::Uri = self.build_uri(path.clone()); 
         let res = self.core.run(self.client.get(uri.clone())).unwrap(); 
         if res.status() == hyper::StatusCode::Ok {
             Ok(self.core.run(res.body().concat2()
@@ -146,7 +141,7 @@ impl BlockingClient {
     }
 
     fn put(&mut self, path :&String, body: &String) -> Result<Option<String>, hyper::StatusCode> {
-        let uri : hyper::Uri = format!("{}/{}", URI_BASE, path).parse().unwrap();
+        let uri : hyper::Uri = self.build_uri(path.clone()); 
         let mut post_req = Request::new(Method::Post, uri.clone());
         post_req.headers_mut().set(ContentType::plaintext());
         post_req.headers_mut().set(ContentLength(body.len() as u64));
@@ -157,19 +152,24 @@ impl BlockingClient {
             _ => Err(res_post.status())
         }
     }
+
+    fn build_uri(&self, path: String) -> hyper::Uri { 
+        format!("http://localhost:{}/{}", self.port, path).parse().unwrap() 
+    }
 }
 
     #[test]
     fn get_nothing() {
-        start_server();
-        let mut client = BlockingClient::new();
+        start_server(1337);
+        let mut client = BlockingClient::new(1337);
         let result = client.get(&String::from("foo"));
         assert_eq!(hyper::StatusCode::NotFound, result.unwrap_err());
     }
 
     #[test]
     fn put_empty_get() { 
-        let mut client = BlockingClient::new();
+        start_server(1338);
+        let mut client = BlockingClient::new(1338);
         let body = String::from("123");
         let path = String::from("get_put");
 
@@ -178,20 +178,14 @@ impl BlockingClient {
         assert_eq!(body, client.get(&path).unwrap()); 
     }
     
-    fn start_server() { 
-        let local_state = SERVER_STATE.clone();
-        let mut server_init = local_state.lock().unwrap();
-        if *server_init { 
-            return;
-        }
-        *server_init = true;
+    fn start_server(port :u32) { 
         thread::spawn(move || { 
-            let addr = "127.0.0.1:1337".parse().unwrap();
+            let addr = format!("127.0.0.1:{}", port).parse().unwrap();
 
             let server = Http::new().bind(&addr, || Ok(Echo::new())).unwrap();
             server.run().unwrap();
         });
-        thread::sleep(time::Duration::from_millis(2000));
+        thread::sleep(time::Duration::from_millis(500));
     }
 
 }

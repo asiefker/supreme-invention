@@ -1,6 +1,7 @@
 extern crate futures;
 extern crate hyper;
 extern crate pretty_env_logger;
+#[macro_use] extern crate log;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -32,10 +33,10 @@ impl Service for Echo {
         let path = String::from(uri.path());
         match m { 
             Get => {
-                println!("getting at {}, len {}",path, self.data.borrow().len() );
+                info!("getting at {}, len {}",path, self.data.borrow().len() );
                 match self.data.borrow().get(&path) {
                     Some(v) => {
-                        println!("Present {}", v);
+                        info!("Present {}", v);
                         Box::new(futures::future::ok(
                             Response::new()
                                 .with_header(ContentLength(v.len() as u64))
@@ -43,7 +44,7 @@ impl Service for Echo {
                         ))
                     } 
                     _ => {
-                        println!("Empty");
+                        info!("Empty");
                         Box::new(futures::future::ok(
                             Response::new().with_status(StatusCode::NotFound),
                         ))
@@ -51,7 +52,7 @@ impl Service for Echo {
                 }
             }
             Post => {
-                println!("Posting");
+                info!("Posting");
                 let state = self.data.clone();
                 Box::new(
                     body.concat2()
@@ -136,7 +137,7 @@ impl BlockingClient {
             Ok(self.core.run(res.body().concat2()
                 .and_then(|c| {  
                           let body = String::from_utf8(c.to_vec()).unwrap(); 
-                          println!("Built string"); 
+                          info!("Built string"); 
                           ok(body)
                 })).unwrap())
         } else {

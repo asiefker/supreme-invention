@@ -41,17 +41,17 @@ impl Storage for HashStorage {
     }
 }
 
-struct MyServer {
-    storage: Rc<RefCell<Storage>>,
+struct MyServer<'a> {
+    storage: Rc<RefCell<Storage +'a>>,
 }
 
-impl MyServer {
-    pub fn new<T>(storage :T) -> MyServer where T: Storage {
-        MyServer{storage: Rc::new(RefCell::new(HashStorage::new())) }
+impl <'a> MyServer<'a> {
+    pub fn new<T>(storage : T) -> MyServer<'a> where T: Storage + 'a {
+        MyServer{storage: Rc::new(RefCell::new(storage)) }
     }
 }
 
-impl Service for MyServer {
+impl Service for MyServer<'static> {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;

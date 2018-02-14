@@ -93,7 +93,6 @@ fn main() {
 #[cfg(test)]
 mod test {
 
-
 extern crate hyper;
 extern crate tokio_core;
 use Echo;
@@ -104,10 +103,7 @@ use hyper::header::{ContentType, ContentLength};
 use hyper::server::Http;
 use hyper::client::HttpConnector;
 use std::{thread, time};
-use std::sync::{Arc, Mutex}; 
 use std::result::Result;
-
-
 
 struct BlockingClient { 
     core: tokio_core::reactor::Core,

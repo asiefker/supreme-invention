@@ -2,44 +2,17 @@ extern crate futures;
 extern crate hyper;
 extern crate pretty_env_logger;
 #[macro_use] extern crate log;
+mod storage;
+mod hashstorage;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use futures::{Future, Stream};
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Http, Service, Request, Response};
-
-struct HashStorage {
-    data: HashMap<String, String>,
-}
-
-impl HashStorage {
-    fn new() -> HashStorage {
-        HashStorage { data: HashMap::new() }
-    }
-}
-
-trait Storage {
-    fn put(&mut self, key: String, value: String) -> Option<String>;
-    fn get(&self, key: &String) -> Option<String>;
-    fn len(&self) -> usize;
-}
-
-impl Storage for HashStorage {
-    fn get(&self, key: &String) -> Option<String> {
-        self.data.get(key).map(|s| {s.clone()})   
-    }
-
-    fn put(&mut self, key: String, value: String) -> Option<String> {
-        self.data.insert(key, value)
-    }
-
-    fn len(&self) -> usize {
-        self.data.len()
-    }
-}
+use storage::Storage;
+use hashstorage::HashStorage;
 
 struct MyServer<'a> {
     storage: Rc<RefCell<Storage +'a>>,

@@ -11,18 +11,47 @@ use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Http, Service, Request, Response};
 
-struct Echo {
-    data: Rc<RefCell<HashMap<String, String>>>,
+struct HashStorage {
+    data: HashMap<String, String>,
 }
 
-impl Echo {
-    fn new() -> Echo {
-        Echo { data: Rc::new(RefCell::new(HashMap::new())) }
+impl HashStorage {
+    fn new() -> HashStorage {
+        HashStorage { data: HashMap::new() }
     }
 }
 
+trait Storage {
+    fn put(&mut self, key: String, value: String) -> Option<String>;
+    fn get(&self, key: &String) -> Option<String>;
+    fn len(&self) -> usize;
+}
 
-impl Service for Echo {
+impl Storage for HashStorage {
+    fn get(&self, key: &String) -> Option<String> {
+        self.data.get(key).map(|s| {s.clone()})   
+    }
+
+    fn put(&mut self, key: String, value: String) -> Option<String> {
+        self.data.insert(key, value)
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+struct MyServer {
+    storage: Rc<RefCell<Storage>>,
+}
+
+impl MyServer {
+    pub fn new<T>(storage :T) -> MyServer where T: Storage {
+        MyServer{storage: Rc::new(RefCell::new(HashStorage::new())) }
+    }
+}
+
+impl Service for MyServer {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
@@ -33,8 +62,8 @@ impl Service for Echo {
         let path = String::from(uri.path());
         match m { 
             Get => {
-                info!("getting at {}, len {}",path, self.data.borrow().len() );
-                match self.data.borrow().get(&path) {
+                info!("getting at {}, len {}",path, self.storage.borrow().len() );
+                match self.storage.borrow().get(&path) {
                     Some(v) => {
                         info!("Present {}", v);
                         Box::new(futures::future::ok(
@@ -53,12 +82,12 @@ impl Service for Echo {
             }
             Post => {
                 info!("Posting");
-                let state = self.data.clone();
+                let storage = self.storage.clone();
                 Box::new(
                     body.concat2()
                         .and_then(move |c| match String::from_utf8(c.to_vec()) {
                             Ok(s) =>  
-                                match state.borrow_mut().insert(path, s.clone()) {
+                                match storage.borrow_mut().put(path, s.clone()) {
                                     Some(b) => { 
                                         futures::future::ok(Response::new()
                                                                 .with_status(StatusCode::Ok)
@@ -84,7 +113,7 @@ fn main() {
     pretty_env_logger::init().unwrap();
     let addr = "127.0.0.1:1337".parse().unwrap();
 
-    let server = Http::new().bind(&addr, || Ok(Echo::new())).unwrap();
+    let server = Http::new().bind(&addr, || Ok(MyServer::new(HashStorage::new()))).unwrap();
     println!(
         "Listeningon http://{} with 1 thread.",
         server.local_addr().unwrap()
@@ -99,7 +128,7 @@ mod test {
 
 extern crate hyper;
 extern crate tokio_core;
-use Echo;
+use {MyServer,HashStorage};
 use futures::{Stream, Future};
 use futures::future::*;
 use hyper::{Client, Method, Request};
@@ -211,7 +240,7 @@ impl BlockingClient {
         thread::spawn(move || { 
             let addr = format!("127.0.0.1:{}", port).parse().unwrap();
 
-            let server = Http::new().bind(&addr, || Ok(Echo::new())).unwrap();
+            let server = Http::new().bind(&addr, || Ok(MyServer::new(HashStorage::new()))).unwrap();
             server.run().unwrap();
         });
         thread::sleep(time::Duration::from_millis(500));

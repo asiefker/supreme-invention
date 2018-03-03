@@ -2,11 +2,16 @@
 name = "dist-map"
 version = "0.1.0"
 authors = ["Adam Siefker <siefker@gmail.com>"]
+build = "build.rs" 
+
+[build-dependencies]
+protoc-rust = "1.4"
 
 [dependencies]
 hyper = "0.11"
 futures = "0.1.14"
 env_logger = "0.4.3"
 pretty_env_logger = "0.1.1"
+protobuf = "1.4"
 log = "0.3.8"
 tokio-core = "0.1.9"

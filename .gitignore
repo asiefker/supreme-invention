@@ -11,3 +11,4 @@ Cargo.lock
 *swp
 *.iml
 .idea/*
+src/data.rs

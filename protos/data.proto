@@ -1,0 +1,8 @@
+syntax="proto2";
+
+message Record {   
+    required bytes name = 1;   
+    required bytes context = 2;   
+    required bytes data = 3;
+}
+
